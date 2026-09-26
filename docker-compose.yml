@@ -1,0 +1,35 @@
+services:
+  shairport-sync:
+    # "classic" = AirPlay 1. See README for why not AirPlay 2.
+    image: mikebrady/shairport-sync:classic
+    container_name: airplay-shairport
+    restart: unless-stopped
+    # Host network so the receiver is announced over mDNS on your LAN.
+    network_mode: host
+    volumes:
+      - ./shairport-sync.conf:/etc/shairport-sync.conf:ro
+      - pipe:/pipe
+    depends_on:
+      - streamer
+
+  streamer:
+    image: ghcr.io/sidun-av/airplay-xiaomi-speaker:latest
+    container_name: airplay-streamer
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - HA_URL=${HA_URL}
+      - HA_TOKEN=${HA_TOKEN}
+      - SPEAKER_ENTITY=${SPEAKER_ENTITY}
+      - STREAM_URL=http://${HOST_IP}:8095/live.mp3
+      # Optional, defaults shown:
+      # - BITRATE=192k
+      # - STOP_GRACE=15
+      # - VOLUME_SYNC=1
+      # - VOLUME_MAX=1.0
+      # - PAUSE_ON_STOP=1
+    volumes:
+      - pipe:/pipe
+
+volumes:
+  pipe:
