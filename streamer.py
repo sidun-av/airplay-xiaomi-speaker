@@ -63,6 +63,7 @@ def read_fifo():
     fd = os.open(FIFO, os.O_RDWR)
     while True:
         data = os.read(fd, 65536)
+        session.saw_audio(data)
         with pcm_lock:
             pcm.extend(data)
             if len(pcm) > MAX_BUFFER:
@@ -148,10 +149,14 @@ class Session:
         self.playing = False
         self.token = None  # only /live.mp3?t=<token> of the current session streams
         self.stop_timer = None
-        self.vol_timer = None
+        self.hook_at = None  # monotonic time of the last /hook/start, for timing logs
+        self.vol_level = None
+        self.vol_cond = threading.Condition()
+        threading.Thread(target=self._volume_worker, daemon=True).start()
 
     def start(self):
         with self.lock:
+            self.hook_at = time.monotonic()
             if self.stop_timer:
                 self.stop_timer.cancel()
                 self.stop_timer = None
@@ -187,17 +192,37 @@ class Session:
         if PAUSE_ON_STOP:
             ha("media_pause")
 
+    def since_hook(self):
+        """Seconds since the last /hook/start (for timing logs), or None."""
+        at = self.hook_at
+        return None if at is None else time.monotonic() - at
+
+    def saw_audio(self, data):
+        """Log how long after /hook/start the first non-silent PCM arrived."""
+        if self.hook_at is None or data.count(0) == len(data):
+            return
+        log.info("first audio %.2fs after start hook", self.since_hook())
+        self.hook_at = None
+
     def volume(self, db):
         if not VOLUME_SYNC:
             return
         level = 0.0 if db <= -30 else min(1.0, max(0.0, (db + 30) / 30)) * VOLUME_MAX
-        with self.lock:
-            if self.vol_timer:
-                self.vol_timer.cancel()
-            self.vol_timer = threading.Timer(0.4, ha, args=("volume_set",),
-                                             kwargs={"volume_level": round(level, 2)})
-            self.vol_timer.daemon = True
-            self.vol_timer.start()
+        with self.vol_cond:
+            self.vol_level = round(level, 2)
+            self.vol_cond.notify()
+
+    def _volume_worker(self):
+        # One call at a time, always with the latest level: cloud calls take
+        # seconds, and parallel ones could land out of order.
+        while True:
+            with self.vol_cond:
+                while self.vol_level is None:
+                    self.vol_cond.wait()
+            time.sleep(0.4)  # debounce slider drags
+            with self.vol_cond:
+                level, self.vol_level = self.vol_level, None
+            ha("volume_set", volume_level=level)
 
 
 session = Session()
@@ -238,6 +263,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def stream(self):
+        if (t := session.since_hook()) is not None:
+            log.info("speaker connected %.2fs after start hook", t)
         self.send_response(200)
         self.send_header("Content-Type", "audio/mpeg")
         self.send_header("Cache-Control", "no-cache, no-store")

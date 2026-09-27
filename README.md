@@ -1,7 +1,7 @@
 # airplay-xiaomi-speaker
 
 Turn a **Xiaomi Smart Speaker Pro** (and probably other XiaoAI speakers) into an
-**AirPlay receiver**. It shows up in the AirPlay menu on iPhone, iPad and Mac, and
+**AirPlay 2 receiver**. It shows up in the AirPlay menu on iPhone, iPad and Mac, and
 whatever you play comes out of the speaker.
 
 The speaker can't speak AirPlay itself and its firmware can't be replaced. So a small
@@ -19,6 +19,7 @@ iPhone / Mac ──AirPlay──► shairport-sync ──PCM──► streamer �
 
 - [How it works](#how-it-works)
 - [Limitations](#limitations): read these before you start
+- [Latency](#latency)
 - [Requirements](#requirements)
 - [Setup](#setup)
 - [Configuration](#configuration)
@@ -30,9 +31,10 @@ iPhone / Mac ──AirPlay──► shairport-sync ──PCM──► streamer �
 Two containers, both on the host network:
 
 1. **`shairport-sync`** ([mikebrady/shairport-sync](https://github.com/mikebrady/shairport-sync),
-   the AirPlay 1 "classic" build) announces the receiver over mDNS and writes the incoming
-   audio as raw PCM into a FIFO. Its session hooks call the streamer when playback starts or
-   stops and when the AirPlay volume changes.
+   the AirPlay 2 build, with [nqptp](https://github.com/mikebrady/nqptp) for timing) announces
+   the receiver over mDNS and writes the incoming audio into a FIFO as raw 16-bit 44.1 kHz
+   PCM. Its session hooks call the streamer when playback starts or stops and when the
+   AirPlay volume changes (the volume goes through the small `volume-hook.sh`).
 2. **`streamer`** (this repo, `streamer.py`, Python standard library + ffmpeg):
    - Reads the FIFO and encodes it into an endless MP3 stream at `http://<host>:8095/live.mp3`.
      When nothing is playing it sends silence, so the speaker's connection never starves
@@ -52,11 +54,13 @@ endless URL stream: the speaker keeps playing. Ending the stream on our side alw
 
 ## Limitations
 
-- **Latency of a few seconds.** AirPlay buffers about 2 s and the speaker adds its own buffer.
-  That's fine for music and podcasts, but not for video: the sound will lag behind the picture.
-- **AirPlay 1 only.** The speaker appears in the AirPlay menu of iOS, iPadOS and macOS, and
-  in apps with an AirPlay button. It does **not** appear in the Home app or in AirPlay 2
-  multi-room groups.
+- **Latency of a few seconds.** The speaker buffers ~4–5 s of the stream before playing. Part
+  of that is compensated (see [Latency](#latency)), but a few seconds remain. That's fine for
+  music and podcasts, but not for video: the sound will lag behind the picture.
+- **Multi-room isn't sample-accurate.** It's announced as an AirPlay 2 receiver, so you can
+  group it with other AirPlay 2 speakers, but how well it keeps in step depends on the
+  speaker's buffer. Tune `audio_backend_latency_offset_in_seconds` by ear (see
+  [Latency](#latency)). The Home app and multi-room grouping haven't been tested much yet.
 - **Starting playback needs the internet.** Xiaomi Miot Auto sends the "play this URL"
   command through Xiaomi's cloud. The audio itself goes over your LAN, straight from this
   server to the speaker.
@@ -78,8 +82,9 @@ endless URL stream: the speaker keeps playing. Ending the stream on our side alw
 - The shairport-sync image runs its own dbus + avahi-daemon for mDNS. If the host already
   runs `avahi-daemon`, have the container use the host's instead (see
   [Troubleshooting](#troubleshooting)).
-- Free host ports: **TCP 8095** (stream + hooks), **TCP 5000** (AirPlay RTSP), plus UDP ports
-  that shairport-sync picks for audio (6001–6011 by default).
+- Free host ports: **TCP 8095** (stream + hooks), **TCP 7000** (AirPlay 2), **UDP 319 and 320**
+  (nqptp), plus the ports shairport-sync picks for audio. Only one nqptp can run per host, so
+  this can't share a host with another AirPlay 2 shairport-sync.
 
 Tested on the Xiaomi Smart Speaker Pro, model `xiaomi.wifispeaker.oh2p` (the mainland-China
 model, Xiaomi account on the `cn` server). Other XiaoAI speakers that Miot Auto can control
@@ -125,7 +130,11 @@ work.
 
 If you use a stack manager (Portainer, Komodo, Dockge…), point it at this repo's
 `docker-compose.yml` and set the four variables in its environment settings. You'll need
-`shairport-sync.conf` next to the compose file.
+`shairport-sync.conf` and `volume-hook.sh` next to the compose file.
+
+**AirPlay 1 only?** Use `image: mikebrady/shairport-sync:classic` and delete the two latency
+lines at the top of `shairport-sync.conf`: the classic buffer is only ~2 s, too short for a
+−3 s offset. Classic needs TCP 5000 and UDP 6001–6011 instead of 7000/319/320.
 
 ### 4. Play something
 
@@ -133,6 +142,29 @@ On an iPhone, open **Control Center → AirPlay** (or the AirPlay button in any 
 **Xiaomi Speaker**. The speaker should start after a couple of seconds.
 
 To rename the receiver, change `name` in `shairport-sync.conf` and restart.
+
+## Latency
+
+The measured delays on a Xiaomi Smart Speaker Pro were:
+
+- **The speaker's own buffer: ~4–5 s.** Between connecting to the stream and starting
+  playback, the speaker waits a fixed ~3.5 s plus time to buffer data. All of that becomes
+  delay, because the stream is live. Lowering the bitrate doesn't help: at 64k it started
+  *later* (~7.4 s) than at 192k (~4.8 s).
+- **AirPlay: ~2 s** by default. The sender sets this.
+
+AirPlay 2 senders deliver audio seconds ahead of its play time. So shairport-sync is told to
+hand audio over early, with `audio_backend_latency_offset_in_seconds = -3.0` and a larger
+`audio_decoded_buffer_desired_length_in_seconds = 5.0`. With that, the first audio reaches the
+streamer ~0.8 s after the session starts instead of ~2 s, and the overall delay drops
+noticeably.
+
+To tune it, change the offset, restart `shairport-sync`, and listen:
+- More negative means less delay. Too far, and the first seconds of each track may get cut off (not measured yet).
+- For multi-room, adjust it until the Xiaomi plays in step with the other speakers.
+
+The streamer logs the timing of each session (`first audio X s after start hook`, `speaker
+connected X s after start hook`), which helps when tuning.
 
 ## Configuration
 
@@ -181,7 +213,14 @@ so don't expose port 8095 to the internet.
   ```
 - The iPhone and the Docker host must be on the same subnet, with multicast allowed. Guest
   networks and "client isolation" or "AP isolation" block this.
-- On a Mac you can check the announcement with `dns-sd -B _raop._tcp local`.
+- On a Mac you can check the announcement with `dns-sd -B _airplay._tcp local` (AirPlay 2) or
+  `dns-sd -B _raop._tcp local` (AirPlay 1).
+
+**Loud white noise instead of music**
+- The PCM format in the FIFO doesn't match what the streamer reads (16-bit, 44.1 kHz,
+  stereo). The AirPlay 2 build writes 32-bit 48 kHz unless the `pipe` section sets
+  `output_rate`, `output_format` and `output_channels`, as the shipped `shairport-sync.conf`
+  does. Check that your config still has them.
 
 **The speaker is listed, but no sound**
 - Check `docker logs airplay-streamer`. You should see `HA play_media ... -> 200`, followed
@@ -198,6 +237,12 @@ so don't expose port 8095 to the internet.
   ended. While the sender only pauses and keeps the AirPlay session open, the speaker keeps
   playing silence, so resuming is instant. Picking another output on the iPhone ends the
   session.
+
+**The volume slider does nothing**
+- Look for `GET /hook/volume?db=...` in `docker logs airplay-streamer`. If `docker logs
+  airplay-shairport` shows `wget: unrecognized option`, the hook is calling `wget` directly.
+  shairport-sync passes the volume as a separate argument, which is why the shipped config
+  goes through `volume-hook.sh`.
 
 **The volume jumps when I connect**
 - iOS sends its current AirPlay volume when you connect, and the speaker follows it. Lower

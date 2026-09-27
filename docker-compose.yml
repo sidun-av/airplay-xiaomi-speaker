@@ -1,13 +1,17 @@
 services:
   shairport-sync:
-    # "classic" = AirPlay 1. See README for why not AirPlay 2.
-    image: mikebrady/shairport-sync:classic
+    # AirPlay 2 (bundles nqptp). Use the "classic" tag for AirPlay 1 only.
+    image: mikebrady/shairport-sync:latest
     container_name: airplay-shairport
     restart: unless-stopped
-    # Host network so the receiver is announced over mDNS on your LAN.
+    # Host network so the receiver is announced over mDNS and nqptp can use
+    # UDP 319/320 on your LAN.
     network_mode: host
+    cap_add:
+      - SYS_NICE
     volumes:
       - ./shairport-sync.conf:/etc/shairport-sync.conf:ro
+      - ./volume-hook.sh:/hooks/volume.sh:ro
       - pipe:/pipe
     depends_on:
       - streamer
