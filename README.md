@@ -143,6 +143,11 @@ On an iPhone, open **Control Center → AirPlay** (or the AirPlay button in any 
 
 To rename the receiver, change `name` in `shairport-sync.conf` and restart.
 
+**Home app.** The receiver doesn't appear in the Home app on its own; add it by hand
+([upstream guide](https://github.com/mikebrady/shairport-sync/blob/master/ADDINGTOHOME.md)):
+1. Home settings → **Speakers & TV** access → **Anyone on the same network**, with no password.
+2. **+** → **Add Accessory** → **More options…**, then pick **Xiaomi Speaker**.
+
 ## Latency
 
 The measured delays on a Xiaomi Smart Speaker Pro were:
