@@ -60,7 +60,9 @@ endless URL stream: the speaker keeps playing. Ending the stream on our side alw
 - **Multi-room isn't sample-accurate.** It's announced as an AirPlay 2 receiver, so you can
   group it with other AirPlay 2 speakers, but how well it keeps in step depends on the
   speaker's buffer. Tune `audio_backend_latency_offset_in_seconds` by ear (see
-  [Latency](#latency)). The Home app and multi-room grouping haven't been tested much yet.
+  [Latency](#latency)). Multi-room grouping hasn't been tested yet.
+- **No controls in the Home app.** It can be added to the Home app, but its tile shows
+  "Controls not available". Use Control Center or the playing app instead.
 - **Starting playback needs the internet.** Xiaomi Miot Auto sends the "play this URL"
   command through Xiaomi's cloud. The audio itself goes over your LAN, straight from this
   server to the speaker.
@@ -147,6 +149,11 @@ To rename the receiver, change `name` in `shairport-sync.conf` and restart.
 ([upstream guide](https://github.com/mikebrady/shairport-sync/blob/master/ADDINGTOHOME.md)):
 1. Home settings → **Speakers & TV** access → **Anyone on the same network**, with no password.
 2. **+** → **Add Accessory** → **More options…**, then pick **Xiaomi Speaker**.
+
+Its tile in the Home app says **"Controls not available"** even while it plays. That's
+expected: shairport-sync doesn't implement AirPlay remote control (see upstream's
+[What Does Not Work](https://github.com/mikebrady/shairport-sync/blob/master/AIRPLAY2.md#what-does-not-work)).
+Control playback and volume from Control Center, the lock screen, or the app that's playing.
 
 ## Latency
 
